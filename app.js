@@ -66,7 +66,7 @@
       async signOut() {
         const s = session;
         save(null);
-        if (s) fetch(`${BASE}/auth/v1/logout`, { method: "POST", headers: { apikey: KEY, Authorization: `Bearer ${s.access_token}` } }).catch(() => {});
+        if (s) fetch(`${BASE}/auth/v1/logout`, { method: "POST", headers: { apikey: KEY, Authorization: `Bearer ${s.access_token}` } }).catch(() => { });
       },
       me: () => call("/rest/v1/rpc/team_me", { method: "POST", body: {} }),
       members: () => call("/rest/v1/team_members?select=name,sort&order=sort.asc,name.asc"),
@@ -169,7 +169,8 @@
     $("#signin").hidden = true;
     $("#app").hidden = false;
     $("#me").textContent = me;
-    $("#today").textContent = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    const h = new Date().getHours();
+    $("#hello-h").textContent = `Good ${h < 12 ? "morning" : h < 17 ? "afternoon" : "evening"}, ${me}`;
     await Promise.all([loadTasks(), loadAnalytics()]);
   }
 
@@ -220,11 +221,14 @@
       const done = mine.filter((t) => t.done).sort((a, b) => (b.done_at || "").localeCompare(a.done_at || ""));
       const late = open.filter((t) => t.due_on && daysFromToday(t.due_on) < 0).length;
       const showDone = state.openDone.has(m);
-      return `<article class="col" data-member="${esc(m)}">
+      const share = mine.length ? Math.round((done.length / mine.length) * 100) : 0;
+      return `<article class="col${m === state.me ? " me" : ""}" data-member="${esc(m)}">
         <div class="col-head">
+          <span class="avatar" aria-hidden="true">${esc(m.slice(0, 1).toUpperCase())}</span>
           <h3>${esc(m)}${m === state.me ? '<span class="you">you</span>' : ""}</h3>
-          <span class="count num${late ? " late" : ""}">${open.length ? `${open.length} open${late ? ` · ${late} late` : ""}` : ""}</span>
+          <span class="count num${late ? " late" : ""}">${open.length ? `${open.length} open${late ? ` · ${late} late` : ""}` : mine.length ? "All done" : ""}</span>
         </div>
+        <div class="progress" title="${done.length} of ${mine.length} done"><i style="width:${share}%"></i></div>
         ${open.length ? `<ul class="tasks">${open.map(taskHTML).join("")}</ul>` : `<p class="empty-note">Nothing open.</p>`}
         <form class="add" data-member="${esc(m)}"><input data-member="${esc(m)}" placeholder="Add a task" maxlength="300" aria-label="Add a task for ${esc(m)}"></form>
         ${showDone && done.length ? `<ul class="tasks">${done.slice(0, 30).map(taskHTML).join("")}</ul>` : ""}
@@ -233,6 +237,12 @@
     }).join("");
 
     document.querySelectorAll(".add input").forEach((i) => { if (drafts[i.dataset.member]) i.value = drafts[i.dataset.member]; });
+    const openAll = state.tasks.filter((t) => !t.done).length;
+    const lateAll = state.tasks.filter((t) => !t.done && t.due_on && daysFromToday(t.due_on) < 0).length;
+    $("#today").textContent = [
+      new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }),
+      openAll ? `${plural(openAll, "open task")} across the team${lateAll ? `, ${int(lateAll)} late` : ""}` : "Nothing open across the team",
+    ].join(" · ");
     if (state.analytics) renderAnalytics();
     if (typing) {
       const el = document.querySelector(`.add input[data-member="${CSS.escape(typing.member)}"]`);
@@ -408,7 +418,7 @@
     if (!n.orders) {
       out.push(`No paid orders in the last ${days} days.`);
     } else {
-      let s = `${money(n.sales_cents)} in sales from ${plural(n.orders, "order")} in the last ${days} days`;
+      let s = `<strong>${money(n.sales_cents)}</strong> in sales from <strong>${plural(n.orders, "order")}</strong> in the last ${days} days`;
       const c = change(n.sales_cents, b.sales_cents);
       if (c === null) s += ", the first in this window";
       else if (c !== 0) s += `, ${c > 0 ? "up" : "down"} ${Math.abs(c)}% on the ${days} days before`;
@@ -416,9 +426,9 @@
       const lead = a.top_regions[0];
       const type = a.by_type[0];
       const parts = [];
-      if (lead && a.top_regions.length > 1) parts.push(`${esc(lead.name)} sells most (${pct(lead.sales_cents, n.sales_cents)}% of sales)`);
-      if (type && a.by_type.length > 1) parts.push(`${TYPE[type.type]?.label || esc(type.type)} is ${pct(type.sales_cents, n.sales_cents)}% of sales`);
-      if (parts.length) out.push(`${parts.join(", and ").replace(/^./, (c) => c.toUpperCase())}.`);
+      if (lead && a.top_regions.length > 1) parts.push(`<strong>${esc(lead.name)}</strong> sells most (${pct(lead.sales_cents, n.sales_cents)}% of sales)`);
+      if (type && a.by_type.length > 1) parts.push(`<strong>${TYPE[type.type]?.label || esc(type.type)}</strong> is ${pct(type.sales_cents, n.sales_cents)}% of sales`);
+      if (parts.length) out.push(`${parts.join(", and ").replace(/^((?:<[^>]+>)*)(.)/, (_, tags, c) => tags + c.toUpperCase())}.`);
     }
     const warn = [];
     if (a.late) warn.push(`${plural(a.late, "order")} past ${a.late === 1 ? "its" : "their"} delivery date`);
@@ -479,9 +489,9 @@
         <div class="card">
           <div class="card-h"><h3>Open orders</h3><span class="num">${int(openOrders)}</span></div>
           ${rowsHTML([
-            ...a.pipeline.map((p) => `<li><span class="name">${esc(STATUS[p.status] || p.status)}</span><span class="v">${int(p.orders)}</span></li>`),
-            ...(a.late ? [`<li class="late"><span class="name">Past delivery date</span><span class="v">${int(a.late)}</span></li>`] : []),
-          ], "No open orders.")}
+      ...a.pipeline.map((p) => `<li><span class="name">${esc(STATUS[p.status] || p.status)}</span><span class="v">${int(p.orders)}</span></li>`),
+      ...(a.late ? [`<li class="late"><span class="name">Past delivery date</span><span class="v">${int(a.late)}</span></li>`] : []),
+    ], "No open orders.")}
         </div>
         <div class="card">
           <div class="card-h"><h3>Top states</h3><span>by sales</span></div>
@@ -504,10 +514,10 @@
         <div class="card">
           <div class="card-h"><h3>Catalogue</h3><span class="num">${int(cat.live)} live</span></div>
           ${rowsHTML([
-            ...["clothing", "food", "home"].map((k) => `<li><span class="name"><span class="dot" style="background:${TYPE[k].color}"></span>${TYPE[k].label}</span><span class="v">${int(cat.live_by_type[k])}</span></li>`),
-            `<li><span class="name">Published in these ${d} days</span><span class="v">${int(cat.listed_in_period)}</span></li>`,
-            `<li><span class="name">Drafts</span><span class="v">${int(cat.drafts)}</span></li>`,
-          ], "")}
+      ...["clothing", "food", "home"].map((k) => `<li><span class="name"><span class="dot" style="background:${TYPE[k].color}"></span>${TYPE[k].label}</span><span class="v">${int(cat.live_by_type[k])}</span></li>`),
+      `<li><span class="name">Published in these ${d} days</span><span class="v">${int(cat.listed_in_period)}</span></li>`,
+      `<li><span class="name">Drafts</span><span class="v">${int(cat.drafts)}</span></li>`,
+    ], "")}
         </div>
         <div class="card">
           <div class="card-h"><h3>Team</h3><span>done · open · late</span></div>
@@ -602,6 +612,28 @@
     if (document.visibilityState !== "visible" || !state.me) return;
     if (!state.editing) loadTasks();
     if (Date.now() - state.analyticsAt > 5 * 60_000) loadAnalytics();
+  });
+
+  /* ------------------------------------------------------------------ theme: light / dark, remembered on this device */
+
+  const THEME_KEY = "iwc-team-theme";
+  function applyTheme(t) {
+    document.documentElement.dataset.theme = t;
+    const btn = $("#theme");
+    if (btn) btn.setAttribute("aria-label", t === "dark" ? "Switch to light theme" : "Switch to dark theme");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", t === "dark" ? "#15130f" : "#f4efe6");
+  }
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  $("#theme").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
+    applyTheme(next);
+  });
+  // Until someone picks a theme here, follow the system's.
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", (e) => {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch { /* private mode */ }
+    if (!saved) applyTheme(e.matches ? "dark" : "light");
   });
 
   /* ------------------------------------------------------------------ boot */
